@@ -1,7 +1,12 @@
 # 3일 단기매매 수익 전략 연구 & 자동매매 시스템
 
 주가와 거래량을 기준으로 **매수 후 3거래일 이내에 수익이 나는 조건**을 체계적으로 탐색하고,
-발견된 최적 전략을 **한국투자증권 API로 자동매매**하는 시스템입니다.
+발견된 최적 전략을 **자동매매**하는 시스템입니다.
+
+3가지 실행 모드를 제공합니다:
+- **���뮬레이션**: 증권 ��좌 없이 네이버 실시간 시세로 가상 매매 (지금 바로 실행 가능)
+- **모의투자**: 한국투자증권 모의투자 서버 연동
+- **실전매매**: 한국투자증권 실전 서버 연동
 
 ---
 
@@ -44,27 +49,23 @@ stock_strategy/
 │
 ├── [자동매매 봇]
 │   └── auto_trader/
-│       ├── main.py             # 자동매매 CLI
+│       ├── main.py             # 자동매매 CLI (--sim / API 모드)
 │       ├── config.py           # 설정 관리 (환경변수/.env)
-│       ├── broker.py           # 한국투자증권 API 래퍼 (mojito2)
+│       ├── sim_broker.py       # 로컬 시뮬레이션 브로커 (네이버 실시간 시세)
+│       ├── broker.py           # 한국투자증권 API 브로커 (mojito2)
 │       ├── signal_generator.py # RSI(5) 실시간 시그널 생성
 │       ├── trader.py           # 자동 매수/매도 실행기
 │       ├── risk_manager.py     # 포지션 사이징 + 손절 관리
-│       ├── trade_logger.py     # 거래 기록 CSV 로깅
+│       ├── trade_logger.py     # 거래 기록 (CSV + 일간 Markdown 리포트)
 │       ├── scheduler.py        # 장중 자동 스케줄러
 │       ├── setup_guide.py      # 대화형 초기 설정 가이드
-│       ├── run_mock.sh         # 모의투자 실행 스크립트
-│       ├── run_live.sh         # 실전매매 실행 스크립트
+│       ├── run_sim.sh          # 시뮬레이션 실행 (API 불필요)
+│       ├── run_mock.sh         # 모의투자 실행 (한투 모의서버)
+│       ├── run_live.sh         # 실전매매 실행 (한투 실전서버)
 │       ├── .env.example        # API 키 설정 템플릿
-│       └── logs/               # 거래 로그
+│       └── logs/               # 거래 로그 + 일간 리포트
 │
-└── reports/                    # 생성된 분석 리포트
-    ├── final_research_report.md
-    ├── extended_report_KOSPI50_KOSDAQ50.md
-    ├── optimization_RSI2_KOSPI.md
-    ├── optimization_RSI2_KOSDAQ.md
-    ├── auto_trading_guide.md
-    └── backtest_report_*.md
+└── reports/                    # 백테스트 분석 리포트
 ```
 
 ---
@@ -80,8 +81,6 @@ pip install pykrx finance-datareader yfinance vectorbt pandas numpy tabulate
 ### 실행 예시
 
 ```bash
-cd /Users/howard/Project/stock_strategy
-
 # 전략 목록 확인
 python main.py --list
 
@@ -120,42 +119,69 @@ python main.py --full --max 50
 
 ---
 
-## 2. 자동매매 사용법
+## 2. 자동매매 - 3가지 실행 모드
 
-### 사전 준비
+### 모드 비교
 
-1. **한국투자증권 계좌 개설** (앱에서 비대면 개설, ~10분)
-2. **API 키 발급**: https://apiportal.koreainvestment.com → 모의투자 키 발급
-3. **대화형 설정 가이드 실행**:
-   ```bash
-   cd auto_trader
-   python setup_guide.py
-   ```
-   또는 수동으로 `.env` 파일 작성:
-   ```bash
-   cp .env.example .env
-   vi .env  # API_KEY, API_SECRET, ACCOUNT_NO 입력
-   ```
+| | 시뮬레이션 (`run_sim.sh`) | 모의투자 (`run_mock.sh`) | 실전매매 (`run_live.sh`) |
+|---|---|---|---|
+| **증권 계좌** | 불필요 | 필요 | 필요 |
+| **API 키** | 불필요 | 필요 | 필요 |
+| **시세 소스** | 네이버 실시간 (~5-15초) | 한투 모의서버 | 한투 실전서버 |
+| **실제 돈** | X (로컬 가상) | X (서버 가상) | O |
+| **매매 알고리즘** | 실전과 동일 | 실전과 동일 | - |
+| **리스크 관리** | 실전과 동일 | 실전과 동일 | - |
+| **거���비용** | 실전과 동일 (수수료+세금) | 실전과 동일 | - |
+| **체결 ��식** | 시그널 발생 시 즉시 현재가 체결 | 모의서버 체결 | 실제 호가창 체결 |
+| **로그 파일** | `sim_YYYYMMDD.log` | `mock_YYYYMMDD.log` | `live_YYYYMMDD.log` |
 
-### 모의투자 (연습)
+> 시뮬레이션과 실전의 유일한 차이: 시뮬레이션은 시그널 발생 시 현재가로 즉시 체결되고,
+> 실전은 실제 호가창에서 체결되므로 슬리피지가 발생할 수 있습니다.
+> 그 외 전략, 지표, 시세, 비용, 리포트는 모두 동일합니다.
+
+---
+
+### 2-1. 시뮬레이션 (지금 바로 실행 가능)
+
+증권 계좌 없이 네이버 실시간 시세로 전략을 검증합니다.
 
 ```bash
 cd auto_trader
 
-./run_mock.sh test      # API 접속 테스트
-./run_mock.sh once      # 1회 매매 사이클 실행
-./run_mock.sh status    # 포트폴리오 현황
-./run_mock.sh history   # 거래 내역
-./run_mock.sh           # 스케줄러 자동 실행 (09:05~15:35)
+./run_sim.sh test      # 데이터 조회 테스트
+./run_sim.sh once      # 1회 매매 사이클
+./run_sim.sh status    # 포트폴리오 현황
+./run_sim.sh history   # 거래 내역
+./run_sim.sh reset     # 초기화 (1000만���)
+./run_sim.sh           # 스케줄러 자동 실행 (09:05~15:35)
 ```
 
-### 실전매매
+### 2-2. 모의투자 (한투 모의서버)
+
+한국투자증권 모의투자 서버에서 가상 매매합니다.
 
 ```bash
-./run_live.sh test      # 실전 API 접속 테스트
+# 사전 준비: .env 파일에 모의투자 API 키 설정
+cp .env.example .env && vi .env
+
+./run_mock.sh test      # API 접속 테스트
+./run_mock.sh once      # 1회 매매 사이클
+./run_mock.sh           # 스케줄러 자동 실행
+```
+
+### 2-3. 실전매매
+
+실제 돈으로 매매합니다. 확인 프롬프트가 포함되어 있습니다.
+
+```bash
+# 사전 준비: .env 파일에 실전 API 키 설정 (KIS_MOCK=false)
+
+./run_live.sh test      # 실전 API 테스트
 ./run_live.sh once      # 1회 실전 매매 ("yes" 입력 필요)
 ./run_live.sh           # 스케줄러 자동 실행 ("yes" 입력 필요)
 ```
+
+---
 
 ### 매일 자동 실행 (macOS launchd)
 
@@ -170,8 +196,13 @@ launchctl unload ~/Library/LaunchAgents/com.howard.autotrader.plist
 launchctl list | grep autotrader
 ```
 
-현재 launchd는 **모의투자(`run_mock.sh`)**로 설정되어 있습니다.
-실전 전환 시 plist 파일에서 `run_mock.sh` → `run_live.sh --yes`로 변경합니다.
+현재 launchd는 **시뮬레이션(`run_sim.sh`)**으로 설정되어 있습니다.
+
+전환 방법 (plist 파일에서 변경):
+```
+run_sim.sh   → run_mock.sh   → run_live.sh --yes
+(시뮬레이션)    (모의투자)       (실전매매)
+```
 
 ### 자동매매 일일 스케줄
 
@@ -180,26 +211,50 @@ launchctl list | grep autotrader
 | 08:55 | macOS launchd가 봇 자동 시작 |
 | 09:05 | 포트폴리오 현황 확인 |
 | 10분마다 | 보유종목 손절 체크 (장중) |
-| **15:00** | **매도 체크 → 매수 스캔 → 주문 실행** |
+| **15:00** | **매도 체크 → 매수 스캔 → 주문 → 일간 리포트 생성** |
 | 15:25 | 장 마감 전 최종 확인 |
 | 15:35 | 봇 자동 종료 |
 
-### 로그 확인
+---
+
+## 3. 로그 및 리포트
+
+### 저장 구조
+
+```
+auto_trader/logs/
+├── trades.csv                  # 모든 거래 누적 (매수/매도 건건이)
+├── daily_summary.csv           # 일별 요약 누적 (총평가, 손익)
+├── sim_portfolio.json          # 시뮬레이션 포트폴리오 상태
+├── positions.json              # 보유 포지션 추적 (매수일, 손절가)
+├── sim_20260414.log            # 날짜별 시뮬레이션 로그
+├── mock_20260414.log           # 날짜별 모의투자 로그
+├── live_20260414.log           # 날짜별 실전매매 로그
+└── daily_reports/              # 일간 Markdown 리포트
+    ├── daily_20260414.md
+    ├── daily_20260415.md
+    └── ...
+```
+
+### 확인 명령어
 
 ```bash
-# 모의투자 로그
-tail -f auto_trader/logs/mock_20260414.log
+# 실시간 로그
+tail -f logs/sim_20260414.log
 
-# 실전매매 로그
-tail -f auto_trader/logs/live_20260414.log
+# 일간 리포트
+cat logs/daily_reports/daily_20260414.md
 
-# 거래 내역 CSV
-cat auto_trader/logs/trades.csv
+# 누적 거래 내역
+cat logs/trades.csv
+
+# 일별 요약
+cat logs/daily_summary.csv
 ```
 
 ---
 
-## 3. 리스크 관리
+## 4. 리스크 관리
 
 | 항목 | 설정값 |
 |------|--------|
@@ -214,11 +269,12 @@ cat auto_trader/logs/trades.csv
 
 ---
 
-## 4. 기술 스택
+## 5. 기술 스택
 
 | 용도 | 도구 |
 |------|------|
-| 한국 주식 데이터 | pykrx, FinanceDataReader |
+| 한국 주식 데이터 (일봉) | pykrx, FinanceDataReader |
+| 한국 주식 실시간 시세 | 네이버 금융 API (시뮬레이션) |
 | 미국 주식 데이터 | yfinance |
 | 기술적 지표 | 자체 구현 (pandas/numpy) |
 | 백테스트 | 자체 구현 (event-driven) |
@@ -233,6 +289,6 @@ cat auto_trader/logs/trades.csv
 - **과거 성과가 미래 수익을 보장하지 않습니다**
 - 백테스트에는 생존자 편향(survivorship bias)이 포함될 수 있습니다
 - 최적화된 파라미터는 3~6개월마다 재검증이 필요합니다
-- **반드시 모의투자로 최소 2~4주 테스트 후 실전 전환하세요**
+- **반드시 시뮬레이션으로 충분히 테스트 후 실전 전환하세요**
 - API 키는 절대 코드에 하드코딩하지 마세요 (`.env` 사용)
 - 시세조종, 허수 주문 등은 불법입니다

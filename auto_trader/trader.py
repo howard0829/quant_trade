@@ -1,25 +1,42 @@
 """
 자동 매매 실행 모듈 - 시그널 기반 매수/매도 자동 처리
+
+broker_mode:
+  "api"  → 한국투자증권 API (모의/실전)
+  "sim"  → 로컬 시뮬레이션 (API 불필요, pykrx 데이터 사용)
 """
+import os
 import time
 from datetime import datetime
 
-from broker import Broker
 from signal_generator import compute_indicators, check_buy_signal, scan_universe
 from risk_manager import (
     can_open_new_position, calculate_position_size,
     add_position, remove_position, check_positions_for_exit,
     print_portfolio_status, load_positions
 )
-from trade_logger import log_trade, log_daily_summary
+from trade_logger import log_trade, log_daily_summary, generate_daily_report, get_today_trades
 from config import RISK
+
+
+def create_broker(mode=None):
+    """브로커 팩토리 - 모드에 따라 적절한 브로커 생성"""
+    if mode is None:
+        mode = os.environ.get("BROKER_MODE", "api")
+
+    if mode == "sim":
+        from sim_broker import SimBroker
+        return SimBroker()
+    else:
+        from broker import Broker
+        return Broker()
 
 
 class AutoTrader:
     """자동매매 실행기"""
 
-    def __init__(self, watchlist=None):
-        self.broker = Broker()
+    def __init__(self, watchlist=None, broker_mode=None):
+        self.broker = create_broker(broker_mode)
         self.watchlist = watchlist or []
         self.trades_today = 0
 
@@ -199,7 +216,7 @@ class AutoTrader:
         # 3단계: 포트폴리오 현황
         print_portfolio_status(self.broker)
 
-        # 4단계: 일일 요약 로깅
+        # 4단계: 일일 요약 로깅 (CSV)
         balance = self.broker.get_balance()
         log_daily_summary(
             total_eval=balance["total_eval"],
@@ -207,6 +224,18 @@ class AutoTrader:
             total_pnl=balance["total_pnl"],
             positions_count=len(balance["positions"]),
             trades_today=self.trades_today,
+        )
+
+        # 5단계: 일간 Markdown 리포트 생성
+        positions_detail = load_positions()
+        today_trades = get_today_trades()
+        generate_daily_report(
+            balance=balance,
+            positions_detail=positions_detail,
+            trades_today_list=today_trades,
+            signals_found=len(self.watchlist),
+            sold_count=sold,
+            bought_count=bought,
         )
 
         result = {

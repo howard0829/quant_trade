@@ -32,8 +32,8 @@ def is_trading_hours():
 class TradingScheduler:
     """자동매매 스케줄러"""
 
-    def __init__(self, watchlist=None):
-        self.trader = AutoTrader(watchlist=watchlist)
+    def __init__(self, watchlist=None, broker_mode=None):
+        self.trader = AutoTrader(watchlist=watchlist, broker_mode=broker_mode)
 
     def job_morning_check(self):
         """장 시작 시 포트폴리오 현황 확인"""

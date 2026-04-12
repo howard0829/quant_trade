@@ -2,29 +2,32 @@
 3일 단기매매 자동매매 봇 - 메인 실행 파일
 
 사용법:
-    # 1. .env 파일 설정 후 모의투자 테스트
-    python main.py --test          # 접속 테스트
-    python main.py --status        # 포트폴리오 현황
-    python main.py --once          # 1회 매매 사이클 실행
-    python main.py --run           # 스케줄러 자동 실행 (장중 상시)
-    python main.py --history       # 최근 거래 내역
+    # 시뮬레이션 (API 불필요 - pykrx 데이터 사용)
+    python main.py --sim --test       # 데이터 조회 테스트
+    python main.py --sim --once       # 1회 매매 사이��
+    python main.py --sim --run        # 스케줄러 자동 실행
+    python main.py --sim --status     # 포트폴리오 현황
+    python main.py --sim --reset      # 시뮬레이션 초기화 (1000만원)
 
-    # 2. 종목 리스트 지정
-    python main.py --once --tickers 005930,000660,035420
+    # 모의투자 (한국투자증권 모의투자 서버)
+    python main.py --test             # API 접속 테스트
+    python main.py --once             # 1회 매매 사이클
+    python main.py --run              # 스케줄러 자동 실행
+
+    # 종목 리스트 지정
+    python main.py --sim --once --tickers 005930,000660,035420
 """
 import sys
 import os
 import argparse
 
-# 현재 디렉토리를 path에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import validate, print_config, MOCK_TRADING, WATCHLIST
+from config import validate, print_config, MOCK_TRADING, WATCHLIST, RISK
 
 
 def get_default_watchlist():
     """기본 감시 종목 (KOSPI + KOSDAQ 시총 상위)"""
-    # KOSPI 상위 30
     kospi = [
         "005930",  # 삼성전자
         "000660",  # SK하이닉스
@@ -57,7 +60,6 @@ def get_default_watchlist():
         "034020",  # 두산에너빌리티
         "316140",  # 우리금융지주
     ]
-    # KOSDAQ 상위 20
     kosdaq = [
         "247540",  # 에코프로비엠
         "403870",  # HPSP
@@ -83,13 +85,73 @@ def get_default_watchlist():
     return kospi + kosdaq
 
 
+# ── 시뮬레이션 명령어 ──
+
+def cmd_sim_test():
+    """시뮬레이션 데이터 조회 테스트"""
+    print("\n[Test] 로컬 시뮬레이션 테스트 (API 불필요)...")
+    from sim_broker import SimBroker
+    broker = SimBroker()
+
+    price = broker.get_current_price("005930")
+    if price:
+        print(f"  삼성전자 최근 종가: {price['price']:,}원 ({price['change_pct']:+.2f}%)")
+        print(f"  시가: {price['open']:,} | 고가: {price['high']:,} | "
+              f"저가: {price['low']:,} | 거래량: {price['volume']:,}")
+    else:
+        print("  데이터 조회 실패 - 네트워크를 확인하세요")
+        return
+
+    balance = broker.get_balance()
+    print(f"\n  시뮬레이션 예수금: {balance['cash']:,}원")
+    print(f"  총평가: {balance['total_eval']:,}원")
+    print(f"  보유종목: {len(balance['positions'])}개")
+    print("\n  데이터 조회 테스트 성공!")
+
+
+def cmd_sim_status():
+    """시뮬레이션 포트폴리오 현황"""
+    from sim_broker import SimBroker
+    from risk_manager import print_portfolio_status
+    from trade_logger import print_recent_trades
+
+    broker = SimBroker()
+    print_portfolio_status(broker)
+    print_recent_trades(10)
+
+
+def cmd_sim_once(watchlist):
+    """시뮬레이션 1회 매매 사이클"""
+    from trader import AutoTrader
+    trader = AutoTrader(broker_mode="sim")
+    trader.set_watchlist(watchlist)
+    trader.run_trading_cycle()
+
+
+def cmd_sim_run(watchlist):
+    """시뮬레이션 스케줄러"""
+    from scheduler import TradingScheduler
+    scheduler = TradingScheduler(watchlist=watchlist, broker_mode="sim")
+    scheduler.trader.set_watchlist(watchlist)
+    scheduler.run()
+
+
+def cmd_sim_reset():
+    """시뮬레이션 포트폴리오 초기화"""
+    from sim_broker import SimBroker
+    broker = SimBroker()
+    broker.reset()
+    print(f"  시뮬레이션 포트폴리오가 {RISK['total_capital']:,}원으로 초기화되었습니다.")
+
+
+# ── API 명령어 ──
+
 def cmd_test():
-    """접속 테스트"""
+    """API 접속 테스트"""
     print("\n[Test] API 접속 테스트...")
     from broker import Broker
     broker = Broker()
 
-    # 삼성전자 현재가 조회
     price = broker.get_current_price("005930")
     if price:
         print(f"  삼성전자 현재가: {price['price']:,}원 ({price['change_pct']:+.2f}%)")
@@ -99,17 +161,15 @@ def cmd_test():
         print("  현재가 조회 실패 - API 키/네트워크를 확인하세요")
         return
 
-    # 잔고 조회
     balance = broker.get_balance()
     print(f"\n  예수금: {balance['cash']:,}원")
     print(f"  총평가: {balance['total_eval']:,}원")
     print(f"  보유종목: {len(balance['positions'])}개")
-
-    print("\n  ✅ API 접속 테스트 성공!")
+    print("\n  API 접속 테스트 성공!")
 
 
 def cmd_status():
-    """포트폴리오 현황"""
+    """API 포트폴리오 현황"""
     from broker import Broker
     from risk_manager import print_portfolio_status
     from trade_logger import print_recent_trades
@@ -120,31 +180,31 @@ def cmd_status():
 
 
 def cmd_once(watchlist):
-    """1회 매매 사이클"""
+    """API 1회 매매 사이클"""
     from trader import AutoTrader
 
     if not MOCK_TRADING:
-        confirm = input("\n⚠️  실전매매 모드입니다. 정말 실행하시겠습니까? (yes/no): ")
+        confirm = input("\n  실전매매 모드입니다. 정말 실행하시겠습니까? (yes/no): ")
         if confirm.lower() != "yes":
             print("취소됨")
             return
 
-    trader = AutoTrader()
+    trader = AutoTrader(broker_mode="api")
     trader.set_watchlist(watchlist)
     trader.run_trading_cycle()
 
 
 def cmd_run(watchlist):
-    """스케줄러 자동 실행"""
+    """API 스케줄러"""
     from scheduler import TradingScheduler
 
     if not MOCK_TRADING:
-        confirm = input("\n⚠️  실전매매 모드입니다. 스케줄러를 시작하시겠습니까? (yes/no): ")
+        confirm = input("\n  실전매매 모드입니다. 스케줄러를 시작하시겠습니까? (yes/no): ")
         if confirm.lower() != "yes":
             print("취소됨")
             return
 
-    scheduler = TradingScheduler(watchlist=watchlist)
+    scheduler = TradingScheduler(watchlist=watchlist, broker_mode="api")
     scheduler.trader.set_watchlist(watchlist)
     scheduler.run()
 
@@ -155,27 +215,22 @@ def cmd_history():
     print_recent_trades(30)
 
 
+# ── 메인 ──
+
 def main():
     parser = argparse.ArgumentParser(description="3일 단기매매 자동매매 봇")
-    parser.add_argument("--test", action="store_true", help="API 접속 테스트")
+    parser.add_argument("--sim", action="store_true",
+                        help="로컬 시뮬레이션 모드 (API 불필요)")
+    parser.add_argument("--test", action="store_true", help="접속/데이터 테스트")
     parser.add_argument("--status", action="store_true", help="포트폴리오 현황")
     parser.add_argument("--once", action="store_true", help="1회 매매 사이클 실행")
     parser.add_argument("--run", action="store_true", help="스케줄러 자동 실행")
     parser.add_argument("--history", action="store_true", help="거래 내역 조회")
+    parser.add_argument("--reset", action="store_true", help="시뮬레이션 초기화")
     parser.add_argument("--tickers", default=None,
                         help="감시 종목 (쉼표 구분, 예: 005930,000660)")
 
     args = parser.parse_args()
-
-    # 설정 출력
-    print_config()
-
-    # API 키 검증
-    if not validate():
-        print("\n.env.example 파일을 참고하여 .env 파일을 작성하세요.")
-        print(f"  cp .env.example .env")
-        print(f"  vi .env")
-        return
 
     # 종목 리스트
     if args.tickers:
@@ -185,7 +240,43 @@ def main():
     else:
         watchlist = get_default_watchlist()
 
-    # 명령 실행
+    # ── 시뮬레이션 모드 ──
+    if args.sim:
+        os.environ["BROKER_MODE"] = "sim"
+        print(f"\n  [모드] 로컬 시뮬레이션 (API 연결 없음)")
+        print(f"  [자본] {RISK['total_capital']:,}원\n")
+
+        if args.test:
+            cmd_sim_test()
+        elif args.status:
+            cmd_sim_status()
+        elif args.once:
+            cmd_sim_once(watchlist)
+        elif args.run:
+            cmd_sim_run(watchlist)
+        elif args.reset:
+            cmd_sim_reset()
+        elif args.history:
+            cmd_history()
+        else:
+            print("  사용법:")
+            print("    python main.py --sim --test     # 데이터 조회 테스트")
+            print("    python main.py --sim --once     # 1회 매매 사이클")
+            print("    python main.py --sim --run      # 스케줄러 자동 실행")
+            print("    python main.py --sim --status   # 포트폴리오 현황")
+            print("    python main.py --sim --history  # 거래 내역")
+            print("    python main.py --sim --reset    # 초기화 (1000만원)")
+        return
+
+    # ── API 모드 (모의투자/실전) ──
+    print_config()
+
+    if not validate():
+        print("\n.env 파일이 필요��니다. 시뮬레이션은 --sim 옵션을 사용하세요.")
+        print(f"  시뮬레이션: python main.py --sim --test")
+        print(f"  API 설정:   cp .env.example .env && vi .env")
+        return
+
     if args.test:
         cmd_test()
     elif args.status:
@@ -198,10 +289,6 @@ def main():
         cmd_history()
     else:
         parser.print_help()
-        print(f"\n  예시:")
-        print(f"    python main.py --test          # 접속 테스트")
-        print(f"    python main.py --once          # 1회 매매 실행")
-        print(f"    python main.py --run           # 스케줄러 시작")
 
 
 if __name__ == "__main__":
