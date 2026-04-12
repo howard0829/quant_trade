@@ -1,0 +1,7 @@
+# 민감 정보
+.env
+logs/
+
+# Python
+__pycache__/
+*.pyc
