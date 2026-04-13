@@ -6,7 +6,8 @@
 """
 import pandas as pd
 import numpy as np
-from indicators import add_all_indicators, rsi, sma, atr, rvol, obv, volume_spike, vwap_daily
+from indicators import (add_all_indicators, rsi, sma, atr, rvol, obv, volume_spike,
+                        vwap_daily, williams_r, bollinger_bands, mfi, consecutive_down_days)
 
 
 class BaseStrategy:
@@ -312,14 +313,231 @@ class OBVDivergence(BaseStrategy):
         return df
 
 
+class WilliamsRBounce(BaseStrategy):
+    """
+    전략 7: Williams %R 과매도 반등
+    - 매수: %R(10) < -90 이 2일 이상 지속 AND 종가 > SMA(200)
+    - 매도: %R > -20 또는 3일 후
+    - 손절: 매수가 -2%
+    """
+    name = "WilliamsR_Bounce"
+    description = "Williams %R 극단 과매도 반등"
+
+    def get_default_params(self):
+        return {
+            "wr_period": 10,
+            "wr_threshold": -90,
+            "wr_exit": -20,
+            "trend_period": 200,
+            "hold_days": 3,
+            "stop_pct": 2.0,
+            "persist_days": 2,
+        }
+
+    def generate_signals(self, df, **params):
+        p = {**self.get_default_params(), **params}
+        df = df.copy()
+
+        df["_wr"] = williams_r(df["High"], df["Low"], df["Close"], p["wr_period"])
+        df["_sma_trend"] = sma(df["Close"], p["trend_period"])
+
+        oversold = df["_wr"] < p["wr_threshold"]
+        persist = oversold.rolling(window=p["persist_days"], min_periods=p["persist_days"]).sum() >= p["persist_days"]
+        recovering = df["_wr"] > p["wr_threshold"]
+
+        df["entry"] = (
+            persist.shift(1) &
+            recovering &
+            (df["Close"] > df["_sma_trend"])
+        ).astype(int)
+
+        df["exit"] = (df["_wr"] > p["wr_exit"]).astype(int)
+        df["hold_days"] = p["hold_days"]
+        df["stop_loss"] = df["Close"] * (1 - p["stop_pct"] / 100)
+
+        df.drop(columns=[c for c in df.columns if c.startswith("_")], inplace=True)
+        return df
+
+
+class ConsecutiveDecline(BaseStrategy):
+    """
+    전략 8: 연속 하락일 반전
+    - 매수: 3일 이상 연속 종가 하락 AND 총 하락 > ATR(20) AND 종가 > SMA(200)
+    - 매도: 첫 양봉 (종가 > 시가) 또는 3일 후
+    - 손절: ATR(20) × 1.5 하방
+    """
+    name = "Consecutive_Decline"
+    description = "3일+ 연속 하락 후 반전 매매"
+
+    def get_default_params(self):
+        return {
+            "min_down_days": 3,
+            "trend_period": 200,
+            "hold_days": 3,
+            "atr_mult": 1.5,
+        }
+
+    def generate_signals(self, df, **params):
+        p = {**self.get_default_params(), **params}
+        df = df.copy()
+
+        df["_down_days"] = consecutive_down_days(df["Close"])
+        df["_sma_trend"] = sma(df["Close"], p["trend_period"])
+        df["_atr"] = atr(df["High"], df["Low"], df["Close"], 20)
+
+        total_decline = df["Close"].shift(p["min_down_days"]) - df["Close"]
+
+        df["entry"] = (
+            (df["_down_days"] >= p["min_down_days"]) &
+            (total_decline > df["_atr"]) &
+            (df["Close"] > df["_sma_trend"])
+        ).astype(int)
+
+        df["exit"] = (df["Close"] > df["Open"]).astype(int)
+        df["hold_days"] = p["hold_days"]
+        df["stop_loss"] = df["Close"] - df["_atr"] * p["atr_mult"]
+
+        df.drop(columns=[c for c in df.columns if c.startswith("_")], inplace=True)
+        return df
+
+
+class BollingerBBounce(BaseStrategy):
+    """
+    전략 9: Bollinger Band %B 과매도 반등
+    - 매수: %B(20,2) < 0 (하단밴드 이탈) AND 종가 > SMA(200)
+    - 매도: %B > 0.5 (중간밴드 도달) 또는 3일 후
+    - 손절: 매수가 -3%
+    """
+    name = "BB_PctB_Bounce"
+    description = "볼린저밴드 %B 하단 이탈 후 반등"
+
+    def get_default_params(self):
+        return {
+            "bb_period": 20,
+            "bb_std": 2,
+            "pctb_entry": 0.0,
+            "pctb_exit": 0.5,
+            "trend_period": 200,
+            "hold_days": 3,
+            "stop_pct": 3.0,
+        }
+
+    def generate_signals(self, df, **params):
+        p = {**self.get_default_params(), **params}
+        df = df.copy()
+
+        _, _, _, pctb, _ = bollinger_bands(df["Close"], p["bb_period"], p["bb_std"])
+        df["_pctb"] = pctb
+        df["_sma_trend"] = sma(df["Close"], p["trend_period"])
+
+        df["entry"] = (
+            (df["_pctb"] < p["pctb_entry"]) &
+            (df["Close"] > df["_sma_trend"])
+        ).astype(int)
+
+        df["exit"] = (df["_pctb"] > p["pctb_exit"]).astype(int)
+        df["hold_days"] = p["hold_days"]
+        df["stop_loss"] = df["Close"] * (1 - p["stop_pct"] / 100)
+
+        df.drop(columns=[c for c in df.columns if c.startswith("_")], inplace=True)
+        return df
+
+
+class Double7s(BaseStrategy):
+    """
+    전략 10: Double 7s (7일 신저가 → 7일 신고가)
+    - 매수: 종가가 7일 최저가 AND 종가 > SMA(200)
+    - 매도: 종가가 7일 최고가
+    - 손절: ATR(14) × 2 하방
+    """
+    name = "Double_7s"
+    description = "7일 신저가 매수 → 7일 신고가 매도"
+
+    def get_default_params(self):
+        return {
+            "lookback": 7,
+            "trend_period": 200,
+            "hold_days": 5,
+            "atr_mult": 2.0,
+        }
+
+    def generate_signals(self, df, **params):
+        p = {**self.get_default_params(), **params}
+        df = df.copy()
+
+        df["_sma_trend"] = sma(df["Close"], p["trend_period"])
+        df["_atr"] = atr(df["High"], df["Low"], df["Close"], 14)
+        df["_low_n"] = df["Close"].rolling(window=p["lookback"], min_periods=p["lookback"]).min()
+        df["_high_n"] = df["Close"].rolling(window=p["lookback"], min_periods=p["lookback"]).max()
+
+        df["entry"] = (
+            (df["Close"] <= df["_low_n"]) &
+            (df["Close"] > df["_sma_trend"])
+        ).astype(int)
+
+        df["exit"] = (df["Close"] >= df["_high_n"]).astype(int)
+        df["hold_days"] = p["hold_days"]
+        df["stop_loss"] = df["Close"] - df["_atr"] * p["atr_mult"]
+
+        df.drop(columns=[c for c in df.columns if c.startswith("_")], inplace=True)
+        return df
+
+
+class MFIExtreme(BaseStrategy):
+    """
+    전략 11: MFI 극단 과매도 반등
+    - 매수: MFI(14) < 20 AND 종가 > SMA(200)
+    - 매도: MFI > 50 또는 3일 후
+    - 손절: 매수가 -2.5%
+    """
+    name = "MFI_Extreme"
+    description = "MFI 극단 과매도 (수급 기반) 반등"
+
+    def get_default_params(self):
+        return {
+            "mfi_period": 14,
+            "mfi_threshold": 20,
+            "mfi_exit": 50,
+            "trend_period": 200,
+            "hold_days": 3,
+            "stop_pct": 2.5,
+        }
+
+    def generate_signals(self, df, **params):
+        p = {**self.get_default_params(), **params}
+        df = df.copy()
+
+        df["_mfi"] = mfi(df["High"], df["Low"], df["Close"], df["Volume"], p["mfi_period"])
+        df["_sma_trend"] = sma(df["Close"], p["trend_period"])
+
+        df["entry"] = (
+            (df["_mfi"] < p["mfi_threshold"]) &
+            (df["Close"] > df["_sma_trend"])
+        ).astype(int)
+
+        df["exit"] = (df["_mfi"] > p["mfi_exit"]).astype(int)
+        df["hold_days"] = p["hold_days"]
+        df["stop_loss"] = df["Close"] * (1 - p["stop_pct"] / 100)
+
+        df.drop(columns=[c for c in df.columns if c.startswith("_")], inplace=True)
+        return df
+
+
 # 전략 레지스트리
 ALL_STRATEGIES = {
+    # 기존 6개
     "RSI2": RSI2MeanReversion(),
     "VCP": VolumeBreakout(),
     "GapDown": GapDownFade(),
     "VolSpike_RSI": VolumeSpikeRSI(),
     "VWAP": VWAPBreakout(),
     "OBV_Div": OBVDivergence(),
+    # 신규 Top 5
+    "WilliamsR": WilliamsRBounce(),
+    "ConsecDown": ConsecutiveDecline(),
+    "BB_PctB": BollingerBBounce(),
+    "Double7s": Double7s(),
+    "MFI": MFIExtreme(),
 }
 
 

@@ -240,4 +240,34 @@ PARAM_GRIDS = {
         "hold_days": [2, 3, 5],
         "atr_mult": [1.5, 2.0, 2.5],
     },
+    # 신규 Top 5
+    "WilliamsR": {
+        "wr_period": [7, 10, 14],
+        "wr_threshold": [-85, -90, -95],
+        "trend_period": [100, 200],
+        "stop_pct": [1.5, 2.0, 3.0],
+    },
+    "ConsecDown": {
+        "min_down_days": [2, 3, 4, 5],
+        "trend_period": [100, 200],
+        "atr_mult": [1.0, 1.5, 2.0],
+    },
+    "BB_PctB": {
+        "pctb_entry": [-0.1, 0.0, 0.05],
+        "pctb_exit": [0.3, 0.5, 0.7],
+        "trend_period": [100, 200],
+        "stop_pct": [2.0, 3.0, 4.0],
+    },
+    "Double7s": {
+        "lookback": [5, 7, 10],
+        "trend_period": [100, 200],
+        "hold_days": [3, 5, 7],
+        "atr_mult": [1.5, 2.0, 2.5],
+    },
+    "MFI": {
+        "mfi_threshold": [10, 15, 20, 25],
+        "mfi_exit": [40, 50, 60],
+        "trend_period": [100, 200],
+        "stop_pct": [2.0, 2.5, 3.0],
+    },
 }

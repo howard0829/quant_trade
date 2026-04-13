@@ -100,6 +100,53 @@ def obv_divergence(close, volume, lookback=20):
     return bullish_div
 
 
+def williams_r(high, low, close, period=10):
+    """Williams %R"""
+    highest = high.rolling(window=period, min_periods=period).max()
+    lowest = low.rolling(window=period, min_periods=period).min()
+    return -100 * (highest - close) / (highest - lowest)
+
+
+def bollinger_bands(close, period=20, std_mult=2):
+    """볼린저 밴드 - upper, middle, lower, %B, bandwidth 반환"""
+    middle = sma(close, period)
+    std = close.rolling(window=period, min_periods=period).std()
+    upper = middle + std_mult * std
+    lower = middle - std_mult * std
+    pct_b = (close - lower) / (upper - lower)  # %B
+    bandwidth = (upper - lower) / middle * 100
+    return upper, middle, lower, pct_b, bandwidth
+
+
+def mfi(high, low, close, volume, period=14):
+    """MFI (Money Flow Index) - 거래량 가중 RSI"""
+    typical_price = (high + low + close) / 3
+    money_flow = typical_price * volume
+
+    delta = typical_price.diff()
+    pos_flow = money_flow.where(delta > 0, 0.0)
+    neg_flow = money_flow.where(delta < 0, 0.0)
+
+    pos_sum = pos_flow.rolling(window=period, min_periods=period).sum()
+    neg_sum = neg_flow.rolling(window=period, min_periods=period).sum()
+
+    money_ratio = pos_sum / neg_sum
+    return 100 - (100 / (1 + money_ratio))
+
+
+def consecutive_down_days(close):
+    """연속 하락일 수 계산"""
+    down = (close < close.shift(1)).astype(int)
+    # 연속 카운트: 하락이면 누적, 아니면 0 리셋
+    result = pd.Series(0, index=close.index)
+    for i in range(1, len(close)):
+        if down.iloc[i] == 1:
+            result.iloc[i] = result.iloc[i - 1] + 1
+        else:
+            result.iloc[i] = 0
+    return result
+
+
 def add_all_indicators(df):
     """DataFrame에 모든 기술적 지표를 추가"""
     df = df.copy()
